@@ -125,6 +125,63 @@ app.get('/api/auth/me', authenticateToken, async (req: Request, res: Response) =
     res.status(500).json({ error: 'Failed to get user' })
   }
 })
+// Forgot Password
+app.post('/api/auth/forgot-password', async (req: Request, res: Response) => {
+  try {
+    const { email } = req.body
+    if (!email) {
+      res.status(400).json({ error: 'Email is required' })
+      return
+    }
+    const result = await pool.query('SELECT id, email, name FROM users WHERE email = $1', [email])
+    if (result.rows.length === 0) {
+      res.json({ message: 'If an account with that email exists, a reset link has been sent.' })
+      return
+    }
+    const user = result.rows[0]
+    const resetToken = jwt.sign({ id: user.id, email: user.email, purpose: 'password-reset' }, JWT_SECRET, { expiresIn: '1h' })
+    await pool.query('UPDATE users SET reset_token = $1, reset_token_expires = NOW() + INTERVAL \'1 hour\' WHERE id = $2', [resetToken, user.id])
+    console.log(`\n📧 Password reset requested for ${email}`)
+    console.log(`🔗 Reset token: ${resetToken}\n`)
+    res.json({ message: 'If an account with that email exists, a reset link has been sent.' })
+  } catch (err) {
+    console.error('Forgot password error:', err)
+    res.status(500).json({ error: 'Failed to process request' })
+  }
+})
+
+// Reset Password
+app.post('/api/auth/reset-password', async (req: Request, res: Response) => {
+  try {
+    const { token, password } = req.body
+    if (!token || !password) {
+      res.status(400).json({ error: 'Token and new password are required' })
+      return
+    }
+    let decoded: any
+    try {
+      decoded = jwt.verify(token, JWT_SECRET)
+    } catch (err) {
+      res.status(400).json({ error: 'Invalid or expired reset token' })
+      return
+    }
+    if (decoded.purpose !== 'password-reset') {
+      res.status(400).json({ error: 'Invalid reset token' })
+      return
+    }
+    const result = await pool.query('SELECT id FROM users WHERE id = $1 AND reset_token = $2 AND reset_token_expires > NOW()', [decoded.id, token])
+    if (result.rows.length === 0) {
+      res.status(400).json({ error: 'Invalid or expired reset token' })
+      return
+    }
+    const hashedPassword = await bcrypt.hash(password, 10)
+    await pool.query('UPDATE users SET password = $1, reset_token = NULL, reset_token_expires = NULL WHERE id = $2', [hashedPassword, decoded.id])
+    res.json({ message: 'Password reset successful. You can now log in.' })
+  } catch (err) {
+    console.error('Reset password error:', err)
+    res.status(500).json({ error: 'Failed to reset password' })
+  }
+})
 
 // ============ PROTECTED ROUTES ============
 
