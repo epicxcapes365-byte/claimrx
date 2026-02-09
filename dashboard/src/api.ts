@@ -1,4 +1,6 @@
-const API_URL = 'http://localhost:3001/api'
+const API_URL = import.meta.env.PROD 
+  ? 'https://claimrx-production.up.railway.app/api' 
+  : 'http://localhost:3001/api'
 
 // Get token from localStorage
 const getToken = () => localStorage.getItem('token')
