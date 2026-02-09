@@ -1,0 +1,25 @@
+import { Pool } from 'pg'
+import dotenv from 'dotenv'
+
+dotenv.config()
+
+export const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false }
+})
+
+// Test connection
+pool.query('SELECT NOW()', (err, res) => {
+  if (err) {
+    console.error('❌ Database connection failed:', err.message)
+  } else {
+    console.log('✅ Database connected:', res.rows[0].now)
+  }
+})
+```
+
+Save it.
+
+Also verify that **backend/.env** exists and contains:
+```
+DATABASE_URL=postgresql://neondb_owner:npg_H9yIft6KGgsx@ep-nameless-wildflower-af857lr5-pooler.c-2.us-west-2.aws.neon.tech/neondb?sslmode=require
