@@ -1,5 +1,5 @@
 import dotenv from 'dotenv'
-dotenv.config()
+dotenv.config({ override: false })
 import express, { Request, Response, NextFunction } from 'express'
 import cors from 'cors'
 import bcrypt from 'bcryptjs'
