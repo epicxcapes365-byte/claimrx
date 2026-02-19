@@ -53,7 +53,6 @@ function App() {
   const [showNewClaimModal, setShowNewClaimModal] = useState(false)
   const [claimStatusFilter, setClaimStatusFilter] = useState('')
   const [claimTimeFrame, setClaimTimeFrame] = useState('')
-  const [appealDateFilter, setAppealDateFilter] = useState('')
   const [appealTimeFrame, setAppealTimeFrame] = useState('')
   const [drillDownData, setDrillDownData] = useState<{title: string, items: any[]}|null>(null)
   const [newClaimLoading, setNewClaimLoading] = useState(false)
@@ -115,7 +114,6 @@ function App() {
   ]
 
   const claimStatuses = [...new Set(claims.map(c => c.status))]
-  const appealStatuses = [...new Set(appeals.map(a => a.status))]
 
   const filteredClaims = claims.filter(claim => { const matchesSearch = claimSearch === '' || claim.id.toLowerCase().includes(claimSearch.toLowerCase()) || claim.patient.toLowerCase().includes(claimSearch.toLowerCase()); const matchesPayer = claimPayerFilter === '' || claim.payer === claimPayerFilter; const matchesStatus = claimStatusFilter === '' || claim.status === claimStatusFilter; const tfDate = getTimeFrameDate(claimTimeFrame); const matchesTimeFrame = !tfDate || (claim.deniedDate && new Date(claim.deniedDate) >= tfDate); const matchesDate = claimDateFilter === '' || (claim.deniedDate && claim.deniedDate.startsWith(claimDateFilter)); return matchesSearch && matchesPayer && matchesStatus && matchesTimeFrame && matchesDate })
 
