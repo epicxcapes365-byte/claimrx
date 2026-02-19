@@ -1,4 +1,4 @@
-const API_URL = 'http://localhost:3001/api'
+const API_URL = window.location.hostname === 'localhost' ? 'http://localhost:3001/api' : 'https://claimrx-production.up.railway.app/api'
 
 const getToken = () => localStorage.getItem('token')
 
