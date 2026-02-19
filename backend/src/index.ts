@@ -94,7 +94,7 @@ app.post('/api/auth/reset-password', async (req: Request, res: Response) => {
   } catch (err) { console.error('Reset password error:', err); res.status(500).json({ error: 'Failed to reset password' }) }
 })
 
-app.get('/api/health', (_req: Request, res: Response) => { res.json({ status: 'ok', timestamp: new Date().toISOString() }) })
+app.get('/api/health', (_req: Request, res: Response) => { res.json({ status: 'ok', timestamp: new Date().toISOString(), hasAnthropicKey: !!process.env.ANTHROPIC_API_KEY, anthropicClient: !!anthropic }) })
 
 app.get('/api/claims', authenticateToken, async (_req: Request, res: Response) => {
   try {
