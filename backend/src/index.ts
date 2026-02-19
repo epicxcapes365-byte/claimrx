@@ -10,7 +10,7 @@ import { Resend } from 'resend'
 const app = express()
 const PORT = 3001
 const JWT_SECRET = process.env.JWT_SECRET || 'claimrx-secret-key-change-in-production'
-const resend = new Resend(process.env.RESEND_API_KEY)
+const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null
 
 app.use(cors())
 app.use(express.json())
