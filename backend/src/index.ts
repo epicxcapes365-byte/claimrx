@@ -6,11 +6,13 @@ import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import { pool } from './db'
 import { Resend } from 'resend'
+import Anthropic from '@anthropic-ai/sdk'
 
 const app = express()
 const PORT = 3001
 const JWT_SECRET = process.env.JWT_SECRET || 'claimrx-secret-key-change-in-production'
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null
+const anthropic = process.env.ANTHROPIC_API_KEY ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }) : null
 
 app.use(cors())
 app.use(express.json())
@@ -50,7 +52,7 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
     if (!validPassword) { res.status(401).json({ error: 'Invalid email or password' }); return }
     const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '7d' })
     res.json({ user: { id: user.id, email: user.email, name: user.name }, token })
-  } catch (err) { console.error(err); res.status(500).json({ error: 'Login failed' }) }
+  } catch (err) { console.error('Login error:', err); res.status(500).json({ error: 'Login failed: ' + (err as any).message }) }
 })
 
 app.get('/api/auth/me', authenticateToken, async (req: Request, res: Response) => {
@@ -173,10 +175,31 @@ app.patch('/api/appeals/:id', authenticateToken, async (req: Request, res: Respo
   } catch (err) { console.error(err); res.status(500).json({ error: 'Database error' }) }
 })
 
-app.post('/api/appeals/generate', authenticateToken, (req: Request, res: Response) => {
+app.post('/api/appeals/generate', authenticateToken, async (req: Request, res: Response) => {
   const { claim } = req.body
-  const letter = 'Dear Claims Review Department,\n\nI am writing to formally appeal the denial of claim ' + claim.id + ' for patient ' + claim.patient + ', dated ' + claim.deniedDate + '.\n\nThe claim in the amount of $' + claim.amount + ' was denied for the following reason: "' + claim.denialReason + '".\n\nAfter careful review of the patient\'s medical records and the applicable coverage guidelines, we believe this denial should be reconsidered for the following reasons:\n\n1. The service provided was medically necessary based on the patient\'s documented condition and symptoms.\n\n2. The treatment aligns with current clinical guidelines and standards of care for the patient\'s diagnosis.\n\n3. All required documentation, including physician notes and diagnostic results, supports the medical necessity of this service.\n\nWe respectfully request that ' + claim.payer + ' review this appeal and reverse the denial decision. Please find attached supporting documentation including physician notes, lab results, and relevant medical records.\n\nThank you for your prompt attention to this matter.\n\nSincerely,\nClaimRx Medical Billing\nOn behalf of ' + claim.patient
-  res.json({ letter })
+
+  if (!anthropic) {
+    const letter = 'Dear Claims Review Department,\n\nI am writing to formally appeal the denial of claim ' + claim.id + ' for patient ' + claim.patient + ', dated ' + claim.deniedDate + '.\n\nThe claim in the amount of $' + claim.amount + ' was denied for the following reason: "' + claim.denialReason + '".\n\nAfter careful review, we believe this denial should be reconsidered as the service was medically necessary.\n\nSincerely,\nClaimRx Medical Billing'
+    res.json({ letter })
+    return
+  }
+
+  try {
+    const message = await anthropic.messages.create({
+      model: 'claude-sonnet-4-5-20250929',
+      max_tokens: 2000,
+      messages: [{
+        role: 'user',
+        content: 'You are a medical billing specialist writing a formal insurance claim appeal letter. Write a compelling, professional appeal letter using the following claim details. The letter should:\n\n1. Cite specific medical necessity arguments relevant to the denial reason\n2. Reference applicable CPT/ICD-10 codes and clinical guidelines when provided\n3. Address the specific denial reason with targeted counter-arguments\n4. Follow standard appeal letter formatting for the specific payer\n5. Include references to relevant payer policy sections where applicable\n6. Be persuasive but professional in tone\n\nClaim Details:\n- Claim ID: ' + claim.id + '\n- Patient: ' + claim.patient + '\n- Amount: $' + claim.amount + '\n- Payer: ' + claim.payer + '\n- Denial Reason: ' + claim.denialReason + '\n- Denied Date: ' + claim.deniedDate + '\n- Deadline: ' + claim.deadline + (claim.serviceCode ? '\n- CPT Code: ' + claim.serviceCode : '') + (claim.diagnosisCode ? '\n- ICD-10 Code: ' + claim.diagnosisCode : '') + (claim.serviceDate ? '\n- Service Date: ' + claim.serviceDate : '') + '\n\nWrite the appeal letter now. Do not include any preamble or explanation - just the letter itself.'
+      }]
+    })
+
+    const letter = message.content[0].type === 'text' ? message.content[0].text : 'Error generating letter'
+    res.json({ letter })
+  } catch (err) {
+    console.error('AI generation error:', err)
+    res.status(500).json({ error: 'Failed to generate appeal letter' })
+  }
 })
 
 app.get('/api/stats', authenticateToken, async (_req: Request, res: Response) => {
