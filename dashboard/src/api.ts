@@ -70,10 +70,54 @@ export const api = {
     })
     return res.json()
   },
-  generateAppeal: async (claim: any) => {
+  generateAppeal: async (claim: any, senderProfile?: any, onChunk?: (text: string) => void) => {
     const res = await authFetch(API_URL + '/appeals/generate', {
       method: 'POST',
-      body: JSON.stringify({ claim })
+      body: JSON.stringify({ claim, senderProfile })
+    })
+    if (onChunk && res.headers.get('content-type')?.includes('text/event-stream')) {
+      const reader = res.body!.getReader()
+      const decoder = new TextDecoder()
+      let fullText = ''
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        const chunk = decoder.decode(value)
+        const lines = chunk.split('\n')
+        for (const line of lines) {
+          if (line.startsWith('data: ') && line !== 'data: [DONE]') {
+            try {
+              const data = JSON.parse(line.slice(6))
+              if (data.text) { fullText += data.text; onChunk(fullText) }
+            } catch (e) {}
+          }
+        }
+      }
+      return { letter: fullText }
+    }
+    return res.json()
+  },
+  getProviders: async () => {
+    const res = await authFetch(API_URL + '/providers')
+    return res.json()
+  },
+  createProvider: async (provider: any) => {
+    const res = await authFetch(API_URL + '/providers', {
+      method: 'POST',
+      body: JSON.stringify(provider)
+    })
+    return res.json()
+  },
+  updateProvider: async (id: number, provider: any) => {
+    const res = await authFetch(API_URL + '/providers/' + id, {
+      method: 'PATCH',
+      body: JSON.stringify(provider)
+    })
+    return res.json()
+  },
+  deleteProvider: async (id: number) => {
+    const res = await authFetch(API_URL + '/providers/' + id, {
+      method: 'DELETE'
     })
     return res.json()
   },

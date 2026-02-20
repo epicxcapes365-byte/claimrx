@@ -176,30 +176,90 @@ app.patch('/api/appeals/:id', authenticateToken, async (req: Request, res: Respo
 })
 
 app.post('/api/appeals/generate', authenticateToken, async (req: Request, res: Response) => {
-  const { claim } = req.body
+  const { claim, senderProfile } = req.body
 
   if (!anthropic) {
-    const letter = 'Dear Claims Review Department,\n\nI am writing to formally appeal the denial of claim ' + claim.id + ' for patient ' + claim.patient + ', dated ' + claim.deniedDate + '.\n\nThe claim in the amount of $' + claim.amount + ' was denied for the following reason: "' + claim.denialReason + '".\n\nAfter careful review, we believe this denial should be reconsidered as the service was medically necessary.\n\nSincerely,\nClaimRx Medical Billing'
+    const letter = 'Dear Claims Review Department,\n\nI am writing to formally appeal the denial of claim ' + claim.id + ' for patient ' + claim.patient + '.\n\nSincerely,\nClaimRx Medical Billing'
     res.json({ letter })
     return
   }
 
   try {
-    const message = await anthropic.messages.create({
-      model: 'claude-sonnet-4-5-20250929',
+    const senderInfo = senderProfile ? '\n\nSender/Provider Information to use in the letter closing:\n- Provider: ' + (senderProfile.providerName || '') + (senderProfile.credentials ? ', ' + senderProfile.credentials : '') + (senderProfile.npi ? '\n- NPI: ' + senderProfile.npi : '') + (senderProfile.taxId ? '\n- Tax ID: ' + senderProfile.taxId : '') + (senderProfile.phone ? '\n- Phone: ' + senderProfile.phone : '') + (senderProfile.fax ? '\n- Fax: ' + senderProfile.fax : '') + (senderProfile.email ? '\n- Email: ' + senderProfile.email : '') + (senderProfile.practiceName ? '\n- Practice: ' + senderProfile.practiceName : '') + (senderProfile.practiceAddress ? '\n- Address: ' + senderProfile.practiceAddress : '') : ''
+
+    res.setHeader('Content-Type', 'text/event-stream')
+    res.setHeader('Cache-Control', 'no-cache')
+    res.setHeader('Connection', 'keep-alive')
+
+    const stream = await anthropic.messages.stream({
+      model: 'claude-haiku-4-5-20251001',
       max_tokens: 2000,
       messages: [{
         role: 'user',
-        content: 'You are a medical billing specialist writing a formal insurance claim appeal letter. Write a compelling, professional appeal letter using the following claim details. The letter should:\n\n1. Cite specific medical necessity arguments relevant to the denial reason\n2. Reference applicable CPT/ICD-10 codes and clinical guidelines when provided\n3. Address the specific denial reason with targeted counter-arguments\n4. Follow standard appeal letter formatting for the specific payer\n5. Include references to relevant payer policy sections where applicable\n6. Be persuasive but professional in tone\n\nClaim Details:\n- Claim ID: ' + claim.id + '\n- Patient: ' + claim.patient + '\n- Amount: $' + claim.amount + '\n- Payer: ' + claim.payer + '\n- Denial Reason: ' + claim.denialReason + '\n- Denied Date: ' + claim.deniedDate + '\n- Deadline: ' + claim.deadline + (claim.serviceCode ? '\n- CPT Code: ' + claim.serviceCode : '') + (claim.diagnosisCode ? '\n- ICD-10 Code: ' + claim.diagnosisCode : '') + (claim.serviceDate ? '\n- Service Date: ' + claim.serviceDate : '') + '\n\nWrite the appeal letter now. Do not include any preamble or explanation - just the letter itself.'
+        content: 'You are a medical billing specialist writing a formal insurance claim appeal letter. Write a compelling, professional appeal letter using the following claim details. The letter should:\n\n1. Cite specific medical necessity arguments relevant to the denial reason\n2. Reference applicable CPT/ICD-10 codes and clinical guidelines when provided\n3. Address the specific denial reason with targeted counter-arguments\n4. Follow standard appeal letter formatting for the specific payer\n5. Include references to relevant payer policy sections where applicable\n6. Be persuasive but professional in tone\n7. Use the sender/provider information for the letter closing and signature block\n\nClaim Details:\n- Claim ID: ' + claim.id + '\n- Patient: ' + claim.patient + '\n- Amount: $' + claim.amount + '\n- Payer: ' + claim.payer + '\n- Denial Reason: ' + claim.denialReason + '\n- Denied Date: ' + claim.deniedDate + '\n- Deadline: ' + claim.deadline + (claim.serviceCode ? '\n- CPT Code: ' + claim.serviceCode : '') + (claim.diagnosisCode ? '\n- ICD-10 Code: ' + claim.diagnosisCode : '') + (claim.serviceDate ? '\n- Service Date: ' + claim.serviceDate : '') + senderInfo + '\n\nWrite the appeal letter now. Do not include any preamble or explanation - just the letter itself.'
       }]
     })
 
-    const letter = message.content[0].type === 'text' ? message.content[0].text : 'Error generating letter'
-    res.json({ letter })
+    for await (const event of stream) {
+      if (event.type === 'content_block_delta' && (event.delta as any).type === 'text_delta') {
+        res.write('data: ' + JSON.stringify({ text: (event.delta as any).text }) + '\n\n')
+      }
+    }
+    res.write('data: [DONE]\n\n')
+    res.end()
   } catch (err) {
     console.error('AI generation error:', err)
-    res.status(500).json({ error: 'Failed to generate appeal letter' })
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Failed to generate appeal letter' })
+    } else {
+      res.write('data: ' + JSON.stringify({ error: 'Generation failed' }) + '\n\n')
+      res.end()
+    }
   }
+})
+
+
+// Get provider profiles
+app.get('/api/providers', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user.id
+    const result = await pool.query('SELECT id, provider_name as "providerName", credentials, npi, tax_id as "taxId", phone, fax, email, practice_name as "practiceName", practice_address as "practiceAddress", is_default as "isDefault" FROM provider_profiles WHERE user_id = $1 ORDER BY is_default DESC, provider_name', [userId])
+    res.json(result.rows)
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Database error' }) }
+})
+
+// Create provider profile
+app.post('/api/providers', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user.id
+    const { providerName, credentials, npi, taxId, phone, fax, email, practiceName, practiceAddress, isDefault } = req.body
+    if (!providerName) { res.status(400).json({ error: 'Provider name is required' }); return }
+    if (isDefault) { await pool.query('UPDATE provider_profiles SET is_default = false WHERE user_id = $1', [userId]) }
+    const result = await pool.query('INSERT INTO provider_profiles (user_id, provider_name, credentials, npi, tax_id, phone, fax, email, practice_name, practice_address, is_default) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id, provider_name as "providerName", credentials, npi, tax_id as "taxId", phone, fax, email, practice_name as "practiceName", practice_address as "practiceAddress", is_default as "isDefault"', [userId, providerName, credentials || null, npi || null, taxId || null, phone || null, fax || null, email || null, practiceName || null, practiceAddress || null, isDefault || false])
+    res.status(201).json(result.rows[0])
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Failed to create provider' }) }
+})
+
+// Update provider profile
+app.patch('/api/providers/:id', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user.id
+    const { providerName, credentials, npi, taxId, phone, fax, email, practiceName, practiceAddress, isDefault } = req.body
+    if (isDefault) { await pool.query('UPDATE provider_profiles SET is_default = false WHERE user_id = $1', [userId]) }
+    const result = await pool.query('UPDATE provider_profiles SET provider_name=$1, credentials=$2, npi=$3, tax_id=$4, phone=$5, fax=$6, email=$7, practice_name=$8, practice_address=$9, is_default=$10 WHERE id=$11 AND user_id=$12 RETURNING id, provider_name as "providerName", credentials, npi, tax_id as "taxId", phone, fax, email, practice_name as "practiceName", practice_address as "practiceAddress", is_default as "isDefault"', [providerName, credentials || null, npi || null, taxId || null, phone || null, fax || null, email || null, practiceName || null, practiceAddress || null, isDefault || false, req.params.id, userId])
+    if (result.rows.length === 0) { res.status(404).json({ error: 'Provider not found' }); return }
+    res.json(result.rows[0])
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Failed to update provider' }) }
+})
+
+// Delete provider profile
+app.delete('/api/providers/:id', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user.id
+    const result = await pool.query('DELETE FROM provider_profiles WHERE id = $1 AND user_id = $2 RETURNING id', [req.params.id, userId])
+    if (result.rows.length === 0) { res.status(404).json({ error: 'Provider not found' }); return }
+    res.json({ message: 'Provider deleted' })
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Failed to delete provider' }) }
 })
 
 app.get('/api/stats', authenticateToken, async (_req: Request, res: Response) => {
